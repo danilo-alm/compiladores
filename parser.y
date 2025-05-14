@@ -10,156 +10,197 @@ typedef struct node {
         int num;
         char *id;
         struct {
-            struct node *left, *right;
+            struct node *left, *middle, *right;
             int op;
-        } op;
+        } op3;   /* re-use for 3-child nodes */
+        struct {
+            struct node *first;
+            struct node *next;
+        } list;  /* linked list of statements */
     };
 } Node;
 
 /* AST kinds */
-#define AST_NUM       1
-#define AST_IDENT     2
-#define AST_OPERATION 3
+#define AST_NUM        1
+#define AST_IDENT      2
+#define AST_OPERATION  3
+#define AST_RETURN     4
+#define AST_IF         5
+#define AST_BLOCK      6
+#define AST_FUNCTION   7
 
-/* AST‐operator codes (distinct from Bison token names) */
-#define AST_OP_PLUS   '+'
-#define AST_OP_MINUS  '-'
-#define AST_OP_TIMES  '*'
-#define AST_OP_DIVIDE '/'
-#define AST_OP_LT     '<'
-#define AST_OP_LE     'l'   /* <= */
-#define AST_OP_GT     '>'
-#define AST_OP_GE     'g'   /* >= */
-#define AST_OP_EQ     'e'   /* == */
-#define AST_OP_NEQ    'n'   /* != */
-#define AST_OP_CALL   'C'
+/* Operator codes */
+#define OP_PLUS   '+'
+#define OP_MINUS  '-'
+#define OP_TIMES  '*'
+#define OP_DIVIDE '/'
+#define OP_LT     '<'
+#define OP_LE     'l'
+#define OP_GT     '>'
+#define OP_GE     'g'
+#define OP_EQ     'e'
+#define OP_NEQ    'n'
+#define OP_CALL   'C'
 
-/* Helpers to build AST nodes */
-Node* create_num_node(int n) {
+/* Helpers */
+Node* make_num(int n) {
     Node *x = malloc(sizeof *x);
-    x->type = AST_NUM; x->num = n;
-    return x;
+    x->type = AST_NUM; x->num = n; return x;
 }
-Node* create_ident_node(char *s) {
+Node* make_ident(char *s) {
     Node *x = malloc(sizeof *x);
-    x->type = AST_IDENT; x->id = strdup(s);
-    return x;
+    x->type = AST_IDENT; x->id = strdup(s); return x;
 }
-Node* create_op_node(Node *l, Node *r, int op) {
+Node* make_op(Node *l, Node *r, int op) {
     Node *x = malloc(sizeof *x);
     x->type = AST_OPERATION;
-    x->op.left  = l;
-    x->op.right = r;
-    x->op.op    = op;
+    x->op3.left = l; x->op3.right = r; x->op3.op = op;
+    return x;
+}
+Node* make_return(Node *expr) {
+    Node *x = malloc(sizeof *x);
+    x->type = AST_RETURN;
+    x->op3.left = expr;
+    return x;
+}
+Node* make_if(Node *cond, Node *then_stmt) {
+    Node *x = malloc(sizeof *x);
+    x->type = AST_IF;
+    x->op3.left = cond;
+    x->op3.middle = then_stmt;
+    return x;
+}
+Node* make_block(Node *stmt_list) {
+    Node *x = malloc(sizeof *x);
+    x->type = AST_BLOCK;
+    x->list.first = stmt_list;
+    return x;
+}
+Node* make_function(char *name, char *param, Node *body) {
+    Node *x = malloc(sizeof *x);
+    x->type = AST_FUNCTION;
+    x->op3.left   = make_ident(name);
+    x->op3.middle = make_ident(param);
+    x->op3.right  = body;
+    return x;
+}
+/* list helper */
+Node* prepend_stmt(Node *stmt, Node *list) {
+    Node *x = malloc(sizeof *x);
+    x->type = AST_BLOCK; /* reuse block for list nodes */
+    x->list.first = stmt;
+    x->list.next  = list;
     return x;
 }
 
-/* Print AST for debugging */
 void print_ast(Node *n, int lvl) {
     if (!n) return;
     for (int i = 0; i < lvl; i++) putchar(' ');
-    if (n->type == AST_NUM)
-        printf("Num: %d\n", n->num);
-    else if (n->type == AST_IDENT)
-        printf("Ident: %s\n", n->id);
-    else {
-        printf("Op: %c\n", n->op.op);
-        print_ast(n->op.left,  lvl+2);
-        print_ast(n->op.right, lvl+2);
+    switch(n->type) {
+      case AST_NUM:        printf("Num: %d\n", n->num); break;
+      case AST_IDENT:      printf("Ident: %s\n",n->id); break;
+      case AST_OPERATION:  printf("Op: %c\n", n->op3.op);
+                           print_ast(n->op3.left, lvl+2);
+                           print_ast(n->op3.right,lvl+2);
+                           break;
+      case AST_RETURN:     printf("Return:\n");
+                           print_ast(n->op3.left, lvl+2);
+                           break;
+      case AST_IF:         printf("If:\n");
+                           print_ast(n->op3.left,   lvl+2);
+                           print_ast(n->op3.middle,lvl+2);
+                           break;
+      case AST_BLOCK: {    
+                           printf("Block:\n");
+                           for(Node *c = n->list.first; c; c = c->list.next)
+                               print_ast(c, lvl+2);
+                       } break;
+      case AST_FUNCTION:   printf("Function:\n");
+                           print_ast(n->op3.left,   lvl+2);  /* name */
+                           print_ast(n->op3.middle,lvl+2);  /* param */
+                           print_ast(n->op3.right, lvl+2);  /* body */
+                           break;
     }
 }
 
-/* Flex interface */
 extern char *yytext;
-int  yylex(void);
+int yylex(void);
 void yyerror(const char *s) { fprintf(stderr,"Erro: %s\n",s); exit(1); }
 %}
 
-/* Precedence declarations on Bison tokens */
+/* Precedences */
 %left EQ NEQ
 %left LT LE GT GE
-%left PLUS MINUS
-%left TIMES DIVIDE
+%left '+' '-'
+%left '*' '/'
 
-/* Semantic-value union */
 %union {
-    int    num;   /* for NUMBER */
-    char  *id;    /* for IDENT */
-    Node  *node;  /* for AST nodes */
+    int    num;
+    char  *id;
+    Node  *node;
 }
 
-/* Token declarations */
-%token        INT RETURN IF ELSE
-%token <num>  NUMBER
-%token <id>   IDENT
-%token        LPAREN RPAREN LBRACE RBRACE SEMICOLON
+%token         INT RETURN IF ELSE
+%token <num>   NUMBER
+%token <id>    IDENT
+%token         LPAREN RPAREN LBRACE RBRACE SEMICOLON
+%token         PLUS MINUS TIMES DIVIDE ASSIGN
+%token         LT LE GT GE EQ NEQ
 
-/* Operator tokens */
-%token        PLUS MINUS TIMES DIVIDE ASSIGN
-%token        LT LE GT GE EQ NEQ
-
-/* Nonterminals producing AST nodes */
-%type  <node> program function stmt_list statement expression
+%type <node> program function stmt_list statement expression
 
 %%
 
 program:
     function
-    {
-      print_ast($1,0);
-      printf("Código correto!\n");
-    }
+    { print_ast($1,0); printf("Fim.\n"); }
 ;
 
 function:
     INT IDENT LPAREN INT IDENT RPAREN LBRACE stmt_list RBRACE
-    {
-      /* use the AST of the last statement as the root */
-      $$ = $8;
-    }
+    { $$ = make_function($2, $5, make_block($8)); }
 ;
 
 stmt_list:
-      /* empty */           { $$ = NULL; }
-    | stmt_list statement   { $$ = $2; }
+      /* empty */          { $$ = NULL; }
+    | stmt_list statement { $$ = prepend_stmt($2, $1); }
 ;
-
 statement:
-      IF LPAREN expression RPAREN statement
-      { $$ = $3; }
+    IF LPAREN expression RPAREN statement
+    { $$ = make_if($3, $5); }
     | RETURN expression SEMICOLON
-      { $$ = $2; }
+        { $$ = make_return($2); }
     | LBRACE stmt_list RBRACE
-      { $$ = $2; }
+        { $$ = make_block($2); }
 ;
 
 expression:
-      expression PLUS expression   
-        { $$ = create_op_node($1, $3, AST_OP_PLUS); }
-    | expression MINUS expression  
-        { $$ = create_op_node($1, $3, AST_OP_MINUS); }
-    | expression TIMES expression  
-        { $$ = create_op_node($1, $3, AST_OP_TIMES); }
-    | expression DIVIDE expression 
-        { $$ = create_op_node($1, $3, AST_OP_DIVIDE); }
-    | expression LT expression     
-        { $$ = create_op_node($1, $3, AST_OP_LT); }
-    | expression LE expression     
-        { $$ = create_op_node($1, $3, AST_OP_LE); }
-    | expression GT expression     
-        { $$ = create_op_node($1, $3, AST_OP_GT); }
-    | expression GE expression     
-        { $$ = create_op_node($1, $3, AST_OP_GE); }
-    | expression EQ expression     
-        { $$ = create_op_node($1, $3, AST_OP_EQ); }
-    | expression NEQ expression    
-        { $$ = create_op_node($1, $3, AST_OP_NEQ); }
+      expression PLUS expression
+        { $$ = make_op($1,$3,OP_PLUS); }
+    | expression MINUS expression
+        { $$ = make_op($1,$3,OP_MINUS); }
+    | expression TIMES expression
+        { $$ = make_op($1,$3,OP_TIMES); }
+    | expression DIVIDE expression
+        { $$ = make_op($1,$3,OP_DIVIDE); }
+    | expression LT expression
+        { $$ = make_op($1,$3,OP_LT); }
+    | expression LE expression
+        { $$ = make_op($1,$3,OP_LE); }
+    | expression GT expression
+        { $$ = make_op($1,$3,OP_GT); }
+    | expression GE expression
+        { $$ = make_op($1,$3,OP_GE); }
+    | expression EQ expression
+        { $$ = make_op($1,$3,OP_EQ); }
+    | expression NEQ expression
+        { $$ = make_op($1,$3,OP_NEQ); }
     | IDENT LPAREN expression RPAREN
-        { $$ = create_op_node(create_ident_node($1), $3, AST_OP_CALL); }
-    | NUMBER                       
-        { $$ = create_num_node($1); }
-    | IDENT                        
-        { $$ = create_ident_node($1); }
+        { $$ = make_op(make_ident($1), $3, OP_CALL); }
+    | NUMBER
+        { $$ = make_num($1); }
+    | IDENT
+        { $$ = make_ident($1); }
 ;
 
 %%
