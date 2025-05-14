@@ -1,27 +1,22 @@
 %{
 #include "parser.tab.h"
-#include <stdio.h>
-#include <stdlib.h>
 %}
-
 %option noyywrap
 
 %%
-
 "int"           return INT;
 "return"        return RETURN;
 "if"            return IF;
 "else"          return ELSE;
 
-[0-9]+          { yylval = atoi(yytext); return NUMBER; }
-[a-zA-Z_][a-zA-Z0-9_]* { return IDENT; }
+[0-9]+          { yylval.num = atoi(yytext); return NUMBER; }
+[A-Za-z_][A-Za-z0-9_]* { yylval.id = strdup(yytext); return IDENT; }
 
 "("             return LPAREN;
 ")"             return RPAREN;
 "{"             return LBRACE;
 "}"             return RBRACE;
 ";"             return SEMICOLON;
-
 "+"             return PLUS;
 "-"             return MINUS;
 "*"             return TIMES;
@@ -35,10 +30,9 @@
 "=="            return EQ;
 "!="            return NEQ;
 
-[ \t\r\n]+      ; // ignora espaços em branco
-
-.               { printf("Caractere desconhecido: %s\n", yytext); }
-
-%%
-
+[ \t\r\n]+      /* skip whitespace */;
+"//".*          /* skip line comment */;
+"/*"([^*]|\*+[^*/])*\*+"/"  /* skip block comment */;
+.               /* any other character: ignore or report */;
+%% 
 
